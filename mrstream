@@ -1,0 +1,147 @@
+#!/bin/sh
+# MrStream-Cli: A minimalist sports stream CLI.
+# This tool is NOT affiliated with sportsonline.vc, sportssonline.click, or any content provider.
+
+VERSION="0.1.0-alpha"
+CONFIG_DIR="${HOME}/.config/mrstream"
+CONFIG_FILE="${CONFIG_DIR}/sources.yaml"
+EXIT_CMD="exit"
+
+# Load core modules
+[ -f "./src/core/fetcher.sh" ] && . ./src/core/fetcher.sh
+[ -f "./src/core/cache.sh" ] && . ./src/core/cache.sh
+[ -f "./src/plugins/sportsonline.sh" ] && . ./src/plugins/sportsonline.sh
+
+show_help() {
+    cat << EOM
+MrStream-Cli v$VERSION
+A minimalist sports stream CLI.
+
+USAGE:
+  mrstream [command] [options]
+
+COMMANDS:
+  search "query"  Search for events
+  doctor          Check dependencies
+  version         Show version string
+
+OPTIONS:
+  --refresh       Force refresh cache
+  --help          Show this help
+
+⚠️ Not affiliated with any content provider.
+EOM
+}
+
+check_deps() {
+    for dep in curl fzf mpv grep sed; do
+        if ! command -v "$dep" >/dev/null 2>&1; then
+            printf "❌ Missing dependency: %s\n" "$dep"
+            return 1
+        fi
+    done
+    return 0
+}
+
+check_consent() {
+    [ -f "$CONFIG_FILE" ] || return 1
+    grep -q "sportsonline:.*enabled: true" "$CONFIG_FILE" || return 1
+    grep -q "acknowledge_non_affiliation: true" "$CONFIG_FILE" || return 1
+    return 0
+}
+
+init_config() {
+    mkdir -p "$CONFIG_DIR"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        cat << EOM > "$CONFIG_FILE"
+sources:
+  sportsonline:
+    enabled: false
+    acknowledge_non_affiliation: false
+EOM
+    fi
+}
+
+search_events() {
+    query="$1"
+    cache_path=$(get_cache_path "sportsonline")
+
+    if [ "$REFRESH" = "true" ] || ! is_cache_valid "$cache_path"; then
+        printf "Fetching fresh schedule...\n" >&2
+        init_cache
+        plugin_fetch > "$cache_path" || return 1
+    fi
+
+    events=$(cat "$cache_path" | plugin_parse)
+
+    if [ -n "$query" ]; then
+        results=$(printf "%s" "$events" | grep -i "$query")
+    else
+        results="$events"
+    fi
+
+    if [ -z "$results" ]; then
+        printf "No events found.\n"
+        return 1
+    fi
+
+    # Check if fzf is available for selection
+    if command -v fzf >/dev/null 2>&1; then
+        selected=$(printf "%s" "$results" | fzf --ansi --prompt="Select Event > " --delimiter='\|' --with-nth=1,2,3)
+    else
+        printf "fzf not found. Please install fzf or provide a specific query.\n"
+        printf "%s\n" "$results"
+        return 1
+    fi
+
+    if [ -n "$selected" ]; then
+        url=$(printf "%s" "$selected" | cut -d'|' -f4)
+        title=$(printf "%s" "$selected" | cut -d'|' -f2)
+        printf "Resolving stream for: %s\n" "$title"
+        m3u8=$(plugin_resolve "$url")
+        if [ -n "$m3u8" ]; then
+            printf "Playing: %s\n" "$m3u8"
+            mpv --title="MrStream: $title" "$m3u8"
+        else
+            printf "❌ Could not resolve stream URL.\n"
+        fi
+    fi
+}
+
+# Parse Global Flags
+REFRESH="false"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --refresh) REFRESH="true"; shift;;
+        --help) show_help; $EXIT_CMD 0;;
+        search|doctor|version) break;;
+        -*) printf "Unknown option: %s\n" "$1"; show_help; $EXIT_CMD 1;;
+        *) break;;
+    esac
+done
+
+# Main
+init_config
+
+cmds="$1"
+[ -n "$cmds" ] && shift
+
+case "$cmds" in
+    search)
+        if ! check_consent; then
+            printf "⚠️ Source 'sportsonline' requires explicit consent.\n"
+            printf "Edit %s and set enabled and acknowledge_non_affiliation to true.\n" "$CONFIG_FILE"
+            $EXIT_CMD 1
+        fi
+        search_events "$1"
+        ;;
+    doctor)
+        check_deps && printf "✅ All dependencies found.\n"
+        ;;
+    version)
+        printf "MrStream-Cli v%s\n" "$VERSION"
+        ;;
+    *)
+        show_help
+        ;;
+esac

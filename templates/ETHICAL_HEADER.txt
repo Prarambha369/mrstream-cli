@@ -1,0 +1,4 @@
+# MrStream-Cli: A minimalist sports stream CLI.
+# This tool is NOT affiliated with sportsonline.vc, sportssonline.click, or any content provider.
+# Use this tool responsibly and at your own risk.
+# The authors are not responsible for any content accessed via this tool.
