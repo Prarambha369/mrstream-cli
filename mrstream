@@ -45,9 +45,31 @@ check_deps() {
 
 check_consent() {
     [ -f "$CONFIG_FILE" ] || return 1
-    grep -q "sportsonline:.*enabled: true" "$CONFIG_FILE" || return 1
-    grep -q "acknowledge_non_affiliation: true" "$CONFIG_FILE" || return 1
+    # Robust check for 'enabled: true' with optional whitespace/indentation
+    grep -qE "^[[:space:]]*enabled:[[:space:]]*true" "$CONFIG_FILE" || return 1
+    # Robust check for 'acknowledge_non_affiliation: true'
+    grep -qE "^[[:space:]]*acknowledge_non_affiliation:[[:space:]]*true" "$CONFIG_FILE" || return 1
     return 0
+}
+
+request_consent() {
+    printf "⚠️  Source 'sportsonline' requires explicit consent.\n"
+    printf "Do you acknowledge that MrStream-Cli is NOT affiliated with this source\n"
+    printf "and wish to enable it? (y/N): "
+    read -r response
+    case "$response" in
+        [yY][eE][sS]|[yY])
+            # Update config file using more robust replacement
+            sed -i 's/enabled:[[:space:]]*false/enabled: true/' "$CONFIG_FILE"
+            sed -i 's/acknowledge_non_affiliation:[[:space:]]*false/acknowledge_non_affiliation: true/' "$CONFIG_FILE"
+            printf "✅ Source enabled. You can now use 'search'.\n"
+            return 0
+            ;;
+        *)
+            printf "❌ Consent denied. To use this source, you must enable it in %s\n" "$CONFIG_FILE"
+            return 1
+            ;;
+    esac
 }
 
 init_config() {
@@ -129,9 +151,9 @@ cmds="$1"
 case "$cmds" in
     search)
         if ! check_consent; then
-            printf "⚠️ Source 'sportsonline' requires explicit consent.\n"
-            printf "Edit %s and set enabled and acknowledge_non_affiliation to true.\n" "$CONFIG_FILE"
-            $EXIT_CMD 1
+            if ! request_consent; then
+                $EXIT_CMD 1
+            fi
         fi
         search_events "$1"
         ;;

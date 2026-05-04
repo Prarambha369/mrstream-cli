@@ -28,8 +28,10 @@ plugin_resolve() {
     html=$(fetch_url "$php_url")
     [ -z "$html" ] && return 1
 
-    m3u8=$(printf "%s" "$html" | sed -n 's/.*source[[:space:]]src="\([^"]*\.m3u8\)".*/\1/p' | head -n 1)
-    [ -z "$m3u8" ] && m3u8=$(printf "%s" "$html" | sed -n "s/.*source[[:space:]]src='\([^']*\.m3u8\)'.*/\1/p" | head -n 1)
+    # Match source src="..." or source src='...' with optional spaces and .m3u8 extension
+    # Also added support for data-url or other common stream attributes if necessary, 
+    # but sticking to the observed pattern first with more flexibility.
+    m3u8=$(printf "%s" "$html" | grep -oE "https?://[^\"']+\.m3u8" | head -n 1)
 
     if [ -n "$m3u8" ]; then
         printf "%s" "$m3u8"
