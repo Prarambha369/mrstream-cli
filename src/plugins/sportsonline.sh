@@ -28,14 +28,20 @@ plugin_resolve() {
     html=$(fetch_url "$php_url")
     [ -z "$html" ] && return 1
 
-    # Match source src="..." or source src='...' with optional spaces and .m3u8 extension
-    # Also added support for data-url or other common stream attributes if necessary, 
-    # but sticking to the observed pattern first with more flexibility.
-    m3u8=$(printf "%s" "$html" | grep -oE "https?://[^\"']+\.m3u8" | head -n 1)
+    # Try direct m3u8 in the PHP page first
+    m3u8=$(printf "%s" "$html" | grep -oE 'https?://[^"[:space:]]+\.m3u8[^"[:space:]]*' | head -n 1)
+    [ -n "$m3u8" ] && { printf "%s" "$m3u8"; return 0; }
 
-    if [ -n "$m3u8" ]; then
-        printf "%s" "$m3u8"
-        return 0
+    # Fallback: extract iframe src and follow it (common embed pattern)
+    embed_url=$(printf "%s" "$html" | grep -oE 'iframe src="([^"]+)"' | sed 's/iframe src="\([^"]*\)"/\1/' | head -n 1)
+    if [ -n "$embed_url" ]; then
+        embed_html=$(fetch_url "$embed_url")
+        if [ -n "$embed_html" ]; then
+            m3u8=$(printf "%s" "$embed_html" | grep -oE 'https?://[^"[:space:]]+\.m3u8[^"[:space:]]*' | head -n 1)
+            [ -n "$m3u8" ] && { printf "%s" "$m3u8"; return 0; }
+        fi
     fi
+
+    # Final fallback: any .m3u8-looking URL in either page
     return 1
 }
