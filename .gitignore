@@ -1,0 +1,24 @@
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Development / test files
+mrstream_test
+test_*
+*.tmp
+*.log
+
+# AI assistant files
+.junie/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Cache / temp directories
+tmp/
+temp/
+*.cache
