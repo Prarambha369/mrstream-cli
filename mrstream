@@ -27,6 +27,7 @@ COMMANDS:
 
 OPTIONS:
   --refresh       Force refresh cache
+    --debug         Enable resolver debug output (prints plugin_resolve diagnostics)
   --help          Show this help
 
 ⚠️ Not affiliated with any content provider.
@@ -87,9 +88,30 @@ search_events() {
     cache_path=$(get_cache_path "sportsonline")
 
     if [ "$REFRESH" = "true" ] || ! is_cache_valid "$cache_path"; then
-        printf "Fetching fresh schedule...\n" >&2
         init_cache
-        plugin_fetch > "$cache_path" || return 1
+        printf "Fetching fresh schedule..." >&2
+
+        # Run fetch in background and show a simple spinner while it runs
+        ( plugin_fetch > "$cache_path" 2>/dev/null ) &
+        fetch_pid=$!
+
+        pos=0
+        spinner="-\\|/"
+        # Loop until fetch completes
+        while kill -0 "$fetch_pid" 2>/dev/null; do
+            pos=$(( (pos + 1) % 4 ))
+            char=$(printf "%s" "$spinner" | cut -c $((pos + 1)))
+            printf "\rFetching fresh schedule... %s" "$char" >&2
+            sleep 0.2
+        done
+
+        # Wait for background process to get its exit status
+        if ! wait "$fetch_pid"; then
+            printf "\n❌ Fetch failed.\n" >&2
+            return 1
+        fi
+
+        printf "\r✅ Fetched schedule.          \n" >&2
     fi
 
     events=$(cat "$cache_path" | plugin_parse)
@@ -118,10 +140,18 @@ search_events() {
         url=$(printf "%s" "$selected" | cut -d'|' -f4)
         title=$(printf "%s" "$selected" | cut -d'|' -f2)
         printf "Resolving stream for: %s\n" "$title"
-        m3u8=$(plugin_resolve "$url")
+        resolve_output=$(plugin_resolve "$url")
+        m3u8=$(printf "%s" "$resolve_output" | head -n1)
+        refr=$(printf "%s" "$resolve_output" | tail -n1)
+
         if [ -n "$m3u8" ]; then
             printf "Playing: %s\n" "$m3u8"
-            mpv --title="MrStream: $title" "$m3u8"
+            # Pass referrer header if different from the stream URL (ani-cli pattern)
+            if [ -n "$refr" ] && [ "$refr" != "$m3u8" ]; then
+                mpv --title="MrStream: $title" --referrer="$refr" --user-agent="Mozilla/5.0" "$m3u8"
+            else
+                mpv --title="MrStream: $title" "$m3u8"
+            fi
         else
             printf "❌ Could not resolve stream URL.\n"
         fi
@@ -130,9 +160,11 @@ search_events() {
 
 # Parse Global Flags
 REFRESH="false"
+DEBUG=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --refresh) REFRESH="true"; shift;;
+        --debug) DEBUG=1; export DEBUG; shift;;
         --help) show_help; $EXIT_CMD 0;;
         search|doctor|version) break;;
         -*) printf "Unknown option: %s\n" "$1"; show_help; $EXIT_CMD 1;;

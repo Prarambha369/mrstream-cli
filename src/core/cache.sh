@@ -3,7 +3,7 @@
 # This tool is NOT affiliated with sportsonline.vc, sportssonline.click, or any content provider.
 
 CACHE_DIR="${HOME}/.cache/mrstream"
-TTL=900 # 15 minutes
+TTL=3600 # 1 hour
 
 init_cache() {
     mkdir -p "$CACHE_DIR"
