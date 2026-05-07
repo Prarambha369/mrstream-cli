@@ -26,9 +26,17 @@ parse_m3u8() {
     if printf "%s" "$m3u8_content" | grep -q "EXTM3U"; then
         [ -n "$DEBUG" ] && printf "DEBUG: m3u8 is a playlist\n" >&2
 
-        # Extract variant playlists (lines that don't start with # or are URLs)
-        # Prefer high bandwidth/resolution (take last line = highest quality)
-        stream_line=$(printf "%s" "$m3u8_content" | grep -v "^#" | grep -v "^$" | tail -n1)
+        # First, check if this is a variant playlist (has EXT-X-STREAM-INF)
+        if printf "%s" "$m3u8_content" | grep -q "EXT-X-STREAM-INF"; then
+            [ -n "$DEBUG" ] && printf "DEBUG: m3u8 is a variant playlist (multiple quality options)\n" >&2
+            # Extract variant playlists (lines that don't start with # or are URLs)
+            stream_line=$(printf "%s" "$m3u8_content" | grep -v "^#" | grep -v "^$" | tail -n1)
+        else
+            [ -n "$DEBUG" ] && printf "DEBUG: m3u8 is a segment playlist (direct stream)\n" >&2
+            # Direct segment playlist - try to return the m3u8 URL itself for mpv to handle
+            printf "%s" "$m3u8_url"
+            return 0
+        fi
 
         if [ -z "$stream_line" ]; then
             # Fall back to first non-comment line
@@ -112,8 +120,7 @@ plugin_resolve() {
     if [ -n "$m3u8" ]; then
         [ -n "$DEBUG" ] && printf "DEBUG: found m3u8 URL: %s\n" "$m3u8" >&2
         temp_refr="$php_url"  # m3u8 URL needs PHP page as referrer
-        final_url=$(parse_m3u8 "$m3u8" "$php_url")
-        [ -n "$final_url" ] && { printf "%s\n" "$final_url"; [ -n "$temp_refr" ] && printf "%s\n" "$temp_refr"; return 0; }
+        # Return m3u8 directly - mpv handles HLS playlists natively
         printf "%s\n" "$m3u8"
         [ -n "$temp_refr" ] && printf "%s\n" "$temp_refr"
         return 0
@@ -124,8 +131,7 @@ plugin_resolve() {
     if [ -n "$m3u8" ]; then
         [ -n "$DEBUG" ] && printf "DEBUG: found m3u8 in config key: %s\n" "$m3u8" >&2
         temp_refr="$php_url"
-        final_url=$(parse_m3u8 "$m3u8" "$php_url")
-        [ -n "$final_url" ] && { printf "%s\n" "$final_url"; [ -n "$temp_refr" ] && printf "%s\n" "$temp_refr"; return 0; }
+        # Return m3u8 directly - mpv handles HLS playlists natively
         printf "%s\n" "$m3u8"
         [ -n "$temp_refr" ] && printf "%s\n" "$temp_refr"
         return 0
@@ -157,8 +163,7 @@ plugin_resolve() {
             if [ -n "$m3u8" ]; then
                 [ -n "$DEBUG" ] && printf "DEBUG: found m3u8 in embed page: %s\n" "$m3u8" >&2
                 temp_refr="$embed_url"  # m3u8 from embed needs embed page as referrer
-                final_url=$(parse_m3u8 "$m3u8" "$embed_url")
-                [ -n "$final_url" ] && { printf "%s\n" "$final_url"; [ -n "$temp_refr" ] && printf "%s\n" "$temp_refr"; return 0; }
+                # Return m3u8 URL directly (mpv handles HLS playlists natively)
                 printf "%s\n" "$m3u8"
                 [ -n "$temp_refr" ] && printf "%s\n" "$temp_refr"
                 return 0
