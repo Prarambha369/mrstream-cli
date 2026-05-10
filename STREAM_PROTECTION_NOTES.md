@@ -61,25 +61,26 @@ Automated curl request
 
 ## Workarounds & Solutions
 
-### Option 1: Use Browser Fallback (Recommended - Currently Implemented)
+### Option 1: Player-Aware Terminal Playback (Recommended)
 
-The CLI automatically falls back to Firefox when direct playback fails:
+The CLI keeps the terminal search/select flow, then tries the available players in a sane order:
 
 ```bash
 ./mrstream search "hearts"
 # Select a stream
-# If direct playback fails, Firefox opens automatically
-# Stream plays in Firefox player
+# MrStream tries mpv, then vlc, then mplayer
 ```
 
+If protected playback fails, the CLI prints the stream URL and referrer so you can open the embed page manually in a browser.
+
 **Pros:**
-- Automatic fallback
-- Streams work reliably
-- No manual steps needed
+- Keeps the CLI flow intact
+- Tries multiple players automatically
+- Fails honestly when the stream is protected
 
 **Cons:**
-- Requires Firefox
-- Not a pure CLI experience
+- Protected streams may still refuse direct playback
+- Browser access may still be needed for some sources
 
 ### Option 2: Manual Browser Access
 
@@ -87,8 +88,8 @@ Users can copy the embed URL manually if they prefer:
 
 ```bash
 ./mrstream --debug search "hearts"
-# Look for the "DEBUG: referrer:" line
-# Manually open the URL in Firefox
+# Look for the "Referrer:" line after playback failure
+# Manually open the URL in a browser
 ```
 
 Example output:

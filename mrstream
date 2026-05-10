@@ -6,6 +6,7 @@ VERSION="0.1.0-alpha"
 CONFIG_DIR="${HOME}/.config/mrstream"
 CONFIG_FILE="${CONFIG_DIR}/sources.yaml"
 EXIT_CMD="exit"
+CLI_PLAYER=""
 
 # Load core modules
 [ -f "./src/core/fetcher.sh" ] && . ./src/core/fetcher.sh
@@ -28,12 +29,12 @@ COMMANDS:
 OPTIONS:
   --refresh       Force refresh cache
   --debug         Enable resolver debug output (prints plugin_resolve diagnostics)
-  --player PLAYER Force specific player (mpv, vlc, mplayer)
+  --player PLAYER Force specific player (mpv, vlc, cvlc, mplayer)
   --help          Show this help
 
 SUPPORTED PLAYERS:
   mpv (default)   Modern player with HLS support
-  vlc             Universal multimedia player
+  vlc / cvlc      Universal multimedia player
   mplayer         Lightweight legacy player
 
 ENVIRONMENT:
@@ -55,8 +56,9 @@ check_deps() {
     # Check for at least one video player
     if ! command -v mpv >/dev/null 2>&1 && \
        ! command -v vlc >/dev/null 2>&1 && \
+       ! command -v cvlc >/dev/null 2>&1 && \
        ! command -v mplayer >/dev/null 2>&1; then
-        printf "❌ No video player found (need mpv, vlc, or mplayer)\n"
+        printf "❌ No video player found (need mpv, vlc/cvlc, or mplayer)\n"
         return 1
     fi
     return 0
@@ -71,6 +73,85 @@ find_player() {
         fi
     done
     return 1
+}
+
+choose_player() {
+    if [ -n "$CLI_PLAYER" ]; then
+        printf "%s" "$CLI_PLAYER"
+        return 0
+    fi
+
+    if [ -n "$MRSTREAM_PLAYER" ]; then
+        printf "%s" "$MRSTREAM_PLAYER"
+        return 0
+    fi
+
+    return 1
+}
+
+play_with_mpv() {
+    title="$1"
+    m3u8="$2"
+    refr="$3"
+
+    if [ -n "$refr" ] && [ "$refr" != "$m3u8" ]; then
+        mpv --title="MrStream: $title" \
+            --no-ytdl \
+            --http-header-fields="User-Agent: Mozilla/5.0 (X11; Linux x86_64),Referer: $refr" \
+            "$m3u8" 2>/dev/null && return 0
+
+        mpv --title="MrStream: $title" \
+            --no-ytdl \
+            --user-agent="Mozilla/5.0 (X11; Linux x86_64)" \
+            --referrer="$refr" \
+            "$m3u8" 2>/dev/null && return 0
+    fi
+
+    mpv --title="MrStream: $title" --no-ytdl "$m3u8" 2>/dev/null
+}
+
+play_with_vlc() {
+    player_cmd="$1"
+    title="$2"
+    m3u8="$3"
+    refr="$4"
+
+    if [ -n "$refr" ] && [ "$refr" != "$m3u8" ]; then
+        "$player_cmd" --quiet --play-and-exit \
+            --meta-title="MrStream: $title" \
+            --http-user-agent="Mozilla/5.0 (X11; Linux x86_64)" \
+            --http-referrer="$refr" \
+            "$m3u8" 2>/dev/null && return 0
+    fi
+
+    "$player_cmd" --quiet --play-and-exit --meta-title="MrStream: $title" "$m3u8" 2>/dev/null
+}
+
+play_with_mplayer() {
+    m3u8="$1"
+    mplayer "$m3u8" 2>/dev/null
+}
+
+play_stream_with_player() {
+    player="$1"
+    title="$2"
+    m3u8="$3"
+    refr="$4"
+
+    case "$player" in
+        mpv)
+            play_with_mpv "$title" "$m3u8" "$refr"
+            ;;
+        vlc|cvlc)
+            play_with_vlc "$player" "$title" "$m3u8" "$refr"
+            ;;
+        mplayer)
+            play_with_mplayer "$m3u8"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 check_consent() {
@@ -169,63 +250,51 @@ search_events() {
         url=$(printf "%s" "$selected" | cut -d'|' -f4)
         title=$(printf "%s" "$selected" | cut -d'|' -f2)
         printf "Resolving stream for: %s\n" "$title"
-        resolve_output=$(plugin_resolve "$url")
-        m3u8=$(printf "%s" "$resolve_output" | head -n1)
-        refr=$(printf "%s" "$resolve_output" | tail -n1)
+        resolve_output=$(plugin_resolve "$url" 2>/dev/null)
+        m3u8=$(printf "%s\n" "$resolve_output" | sed -n '1p')
+        refr=$(printf "%s\n" "$resolve_output" | sed -n '2p')
 
         if [ -n "$m3u8" ]; then
             printf "Playing: %s\n" "$m3u8"
-            PLAYER=$(find_player)
+            preferred_player=$(choose_player)
 
-            if [ -z "$PLAYER" ]; then
-                printf "❌ No video player found. Install mpv, vlc, or mplayer.\n"
-            else
-                [ -n "$DEBUG" ] && printf "DEBUG: using player: %s\n" "$PLAYER" >&2
+            if [ -n "$preferred_player" ]; then
+                [ -n "$DEBUG" ] && printf "DEBUG: using preferred player: %s\n" "$preferred_player" >&2
                 [ -n "$DEBUG" ] && printf "DEBUG: m3u8 URL: %s\n" "$m3u8" >&2
                 [ -n "$DEBUG" ] && printf "DEBUG: referrer: %s\n" "$refr" >&2
 
-                case "$PLAYER" in
-                    mpv)
-                        # MPV: Try with referrer via curl pipe, fall back to direct
-                        if [ -n "$refr" ] && [ "$refr" != "$m3u8" ]; then
-                            [ -n "$DEBUG" ] && printf "DEBUG: attempting mpv with curl pipe (referrer-aware)\n" >&2
-                            curl -s -e "$refr" \
-                                 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-                                 --connect-timeout 10 \
-                                 --max-time 30 \
-                                 "$m3u8" 2>/dev/null | mpv --title="MrStream: $title" --no-ytdl - 2>/dev/null && return 0
-                        fi
-                        # Try direct MPV playback
-                        [ -n "$DEBUG" ] && printf "DEBUG: attempting mpv direct playback\n" >&2
-                        mpv --title="MrStream: $title" "$m3u8" 2>/dev/null && return 0
-                        ;;
+                if play_stream_with_player "$preferred_player" "$title" "$m3u8" "$refr"; then
+                    return 0
+                fi
 
-                    vlc)
-                        # VLC: Can handle referrer via http-user-agent
-                        if [ -n "$refr" ] && [ "$refr" != "$m3u8" ]; then
-                            [ -n "$DEBUG" ] && printf "DEBUG: attempting vlc with custom headers\n" >&2
-                            vlc --http-user-agent="Mozilla/5.0 (X11; Linux x86_64)" \
-                                --meta-title="MrStream: $title" \
-                                "HTTP/$refr/$(printf '%s' "$m3u8")" 2>/dev/null &
-                            sleep 1 && return 0
-                        fi
-                        [ -n "$DEBUG" ] && printf "DEBUG: attempting vlc direct playback\n" >&2
-                        vlc --meta-title="MrStream: $title" "$m3u8" 2>/dev/null &
-                        sleep 1 && return 0
-                        ;;
-
-                    mplayer|cvlc)
-                        # MPlayer/cvlc: Basic playback
-                        [ -n "$DEBUG" ] && printf "DEBUG: attempting $PLAYER playback\n" >&2
-                        $PLAYER "$m3u8" 2>/dev/null && return 0
-                        ;;
-                esac
-
-                # If we reach here, player failed
-                printf "❌ Playback failed with %s\n" "$PLAYER"
+                printf "❌ Direct playback failed with %s.\n" "$preferred_player"
+                printf "ℹ️  This stream appears to be protected.\n"
+                printf "Stream URL: %s\n" "$m3u8"
+                [ -n "$refr" ] && printf "Referrer: %s\n" "$refr"
+                [ -n "$refr" ] && printf "Try opening the referrer in a browser:\n%s\n" "$refr"
+                return 1
             fi
+
+            for player in mpv vlc mplayer cvlc; do
+                command -v "$player" >/dev/null 2>&1 || continue
+                [ -n "$DEBUG" ] && printf "DEBUG: attempting %s playback\n" "$player" >&2
+                [ -n "$DEBUG" ] && printf "DEBUG: m3u8 URL: %s\n" "$m3u8" >&2
+                [ -n "$DEBUG" ] && printf "DEBUG: referrer: %s\n" "$refr" >&2
+
+                if play_stream_with_player "$player" "$title" "$m3u8" "$refr"; then
+                    return 0
+                fi
+            done
+
+            printf "❌ Direct playback failed.\n"
+            printf "ℹ️  This stream appears to be protected or rejected by the player.\n"
+            printf "Stream URL: %s\n" "$m3u8"
+            [ -n "$refr" ] && printf "Referrer: %s\n" "$refr"
+            [ -n "$refr" ] && printf "Try opening the referrer in a browser:\n%s\n" "$refr"
+            return 1
         else
             printf "❌ Could not resolve stream URL.\n"
+            return 1
         fi
     fi
 }
@@ -237,6 +306,12 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --refresh) REFRESH="true"; shift;;
         --debug) DEBUG=1; export DEBUG; shift;;
+        --player)
+            shift
+            [ $# -gt 0 ] || { printf "Missing player after --player\n"; show_help; $EXIT_CMD 1; }
+            CLI_PLAYER="$1"
+            shift
+            ;;
         --help) show_help; $EXIT_CMD 0;;
         search|doctor|version) break;;
         -*) printf "Unknown option: %s\n" "$1"; show_help; $EXIT_CMD 1;;

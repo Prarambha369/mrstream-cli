@@ -412,7 +412,14 @@ mrstream search "Liverpool"
 | Flag | Description |
 |------|-------------|
 | `--refresh` | Force a refresh of the local cache |
+| `--player` | Force a specific player (`mpv`, `vlc`, `mplayer`, `cvlc`) |
 | `--help` | Display the help menu |
+
+You can also set the default player with:
+
+```bash
+MRSTREAM_PLAYER=vlc mrstream search "Liverpool"
+```
 
 ### Troubleshooting
 
@@ -425,7 +432,7 @@ mrstream doctor
 <details><summary><b>Common Issues</b></summary>
 
 - **`fzf` not found**: Ensure `fzf` is installed and in your `$PATH`.
-- **Stream won't play**: Verify `mpv` is correctly installed and functional.
+- **Stream won't play**: Direct playback may be blocked by the stream provider. Try `mpv`, `vlc`, or `mplayer`, or open the printed referrer URL in a browser.
 - **Cache issues**: Use `mrstream search --refresh` to force a cache rebuild.
 
 </details>
