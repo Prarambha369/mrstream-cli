@@ -12,6 +12,7 @@ CLI_PLAYER=""
 [ -f "./src/core/fetcher.sh" ] && . ./src/core/fetcher.sh
 [ -f "./src/core/cache.sh" ] && . ./src/core/cache.sh
 [ -f "./src/plugins/sportsonline.sh" ] && . ./src/plugins/sportsonline.sh
+[ -f "./src/plugins/community.sh" ] && . ./src/plugins/community.sh
 
 show_help() {
     cat << EOM
