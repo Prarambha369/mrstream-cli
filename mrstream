@@ -9,10 +9,17 @@ EXIT_CMD="exit"
 CLI_PLAYER=""
 
 # Load core modules
-[ -f "./src/core/fetcher.sh" ] && . ./src/core/fetcher.sh
-[ -f "./src/core/cache.sh" ] && . ./src/core/cache.sh
-[ -f "./src/plugins/sportsonline.sh" ] && . ./src/plugins/sportsonline.sh
-[ -f "./src/plugins/community.sh" ] && . ./src/plugins/community.sh
+# Use a shared directory for installed files, fallback to local for development
+if [ -d "$HOME/.local/share/mrstream/src" ]; then
+    S_DIR="$HOME/.local/share/mrstream"
+else
+    S_DIR="$(dirname "$(readlink -f "$0")")"
+fi
+
+[ -f "$S_DIR/src/core/fetcher.sh" ] && . "$S_DIR/src/core/fetcher.sh"
+[ -f "$S_DIR/src/core/cache.sh" ] && . "$S_DIR/src/core/cache.sh"
+[ -f "$S_DIR/src/plugins/sportsonline.sh" ] && . "$S_DIR/src/plugins/sportsonline.sh"
+[ -f "$S_DIR/src/plugins/community.sh" ] && . "$S_DIR/src/plugins/community.sh"
 
 show_help() {
     cat << EOM
@@ -157,7 +164,6 @@ play_stream_with_player() {
 
 check_consent() {
     [ -f "$CONFIG_FILE" ] || return 1
-    # Section-aware YAML parsing: check both values exist within sportsonline block
     awk '/^  sportsonline:/{in_section=1} in_section && /enabled:[[:space:]]*true/{e=1} in_section && /acknowledge_non_affiliation:[[:space:]]*true/{a=1} in_section && /^[a-z]/ && !/^  sportsonline:/{in_section=0} END{if(e&&a) exit 0; exit 1}' "$CONFIG_FILE" || return 1
     return 0
 }
@@ -169,7 +175,6 @@ request_consent() {
     read -r response
     case "$response" in
         [yY][eE][sS]|[yY])
-            # Update config file using more robust replacement
             sed -i 's/enabled:[[:space:]]*false/enabled: true/' "$CONFIG_FILE"
             sed -i 's/acknowledge_non_affiliation:[[:space:]]*false/acknowledge_non_affiliation: true/' "$CONFIG_FILE"
             printf "✅ Source enabled. You can now use 'search'.\n"
@@ -196,54 +201,42 @@ EOM
 
 search_events() {
     query="$1"
-    cache_path=$(get_cache_path "sportsonline")
+    
+    plugins="sportsonline community"
+    all_results=""
 
-    if [ "$REFRESH" = "true" ] || ! is_cache_valid "$cache_path"; then
-        init_cache
-        printf "Fetching fresh schedule..." >&2
-
-        # Run fetch in background and show a simple spinner while it runs
-        ( plugin_fetch > "$cache_path" 2>/dev/null ) &
-        fetch_pid=$!
-
-        pos=0
-        spinner="-\\|/"
-        # Loop until fetch completes
-        while kill -0 "$fetch_pid" 2>/dev/null; do
-            pos=$(( (pos + 1) % 4 ))
-            char=$(printf "%s" "$spinner" | cut -c $((pos + 1)))
-            printf "\rFetching fresh schedule... %s" "$char" >&2
-            sleep 0.2
-        done
-
-        # Wait for background process to get its exit status
-        if ! wait "$fetch_pid"; then
-            printf "\n❌ Fetch failed.\n" >&2
-            return 1
+    for plugin in $plugins; do
+        # Isolate plugin execution in a subshell to prevent function collisions
+        # Use S_DIR to ensure absolute paths inside the subshell
+        res=$(sh -c ". $S_DIR/src/core/fetcher.sh; . $S_DIR/src/core/cache.sh; . $S_DIR/src/plugins/$plugin.sh; 
+            cache_path=\$(get_cache_path \"$plugin\")
+            if [ \"$REFRESH\" = \"true\" ] || ! is_cache_valid \"\$cache_path\"; then
+                init_cache
+                plugin_fetch > \"\$cache_path\" 2>/dev/null
+            fi
+            cat \"\$cache_path\" | plugin_parse")
+        
+        if [ -n "$res" ]; then
+            if [ -n "$query" ]; then
+                all_results="${all_results}${res}
+" | grep -i "$query"
+            else
+                all_results="${all_results}${res}
+"
+            fi
         fi
+    done
 
-        printf "\r✅ Fetched schedule.          \n" >&2
-    fi
-
-    events=$(cat "$cache_path" | plugin_parse)
-
-    if [ -n "$query" ]; then
-        results=$(printf "%s" "$events" | grep -i "$query")
-    else
-        results="$events"
-    fi
-
-    if [ -z "$results" ]; then
+    if [ -z "$all_results" ]; then
         printf "No events found.\n"
         return 1
     fi
 
-    # Check if fzf is available for selection
     if command -v fzf >/dev/null 2>&1; then
-        selected=$(printf "%s" "$results" | fzf --ansi --prompt="Select Event > " --delimiter='\|' --with-nth=1,2,3)
+        selected=$(printf "%s\n" "$all_results" | fzf --ansi --prompt="Select Event > " --delimiter='\|' --with-nth=1,2,3)
     else
         printf "fzf not found. Please install fzf or provide a specific query.\n"
-        printf "%s\n" "$results"
+        printf "%s\n" "$all_results"
         return 1
     fi
 
@@ -251,50 +244,49 @@ search_events() {
         url=$(printf "%s" "$selected" | cut -d'|' -f4)
         title=$(printf "%s" "$selected" | cut -d'|' -f2)
         printf "Resolving stream for: %s\n" "$title"
-        resolve_output=$(plugin_resolve "$url" 2>/dev/null)
-        m3u8=$(printf "%s\n" "$resolve_output" | sed -n '1p')
-        refr=$(printf "%s\n" "$resolve_output" | sed -n '2p')
+        
+        # Try each plugin's resolver until one works
+        resolved_output=""
+        for plugin in $plugins; do
+            resolved_output=$(sh -c ". ./src/core/fetcher.sh; . ./src/plugins/$plugin.sh; plugin_resolve \"$url\"")
+            if [ -n "$resolved_output" ]; then
+                # Guard: Ensure the resolved URL is actually a stream (not a PHP page)
+                m3u8_check=$(printf "%s\n" "$resolved_output" | sed -n '1p')
+                if echo "$m3u8_check" | grep -q "\.php$"; then
+                    resolved_output=""
+                    continue
+                fi
+                break
+            fi
+        done
+
+        if [ -z "$resolved_output" ]; then
+            printf "❌ Could not resolve stream URL.\n"
+            return 1
+        fi
+
+        m3u8=$(printf "%s\n" "$resolved_output" | sed -n '1p')
+        refr=$(printf "%s\n" "$resolved_output" | sed -n '2p')
 
         if [ -n "$m3u8" ]; then
             printf "Playing: %s\n" "$m3u8"
             preferred_player=$(choose_player)
 
             if [ -n "$preferred_player" ]; then
-                [ -n "$DEBUG" ] && printf "DEBUG: using preferred player: %s\n" "$preferred_player" >&2
-                [ -n "$DEBUG" ] && printf "DEBUG: m3u8 URL: %s\n" "$m3u8" >&2
-                [ -n "$DEBUG" ] && printf "DEBUG: referrer: %s\n" "$refr" >&2
-
                 if play_stream_with_player "$preferred_player" "$title" "$m3u8" "$refr"; then
                     return 0
                 fi
-
                 printf "❌ Direct playback failed with %s.\n" "$preferred_player"
-                printf "ℹ️  This stream appears to be protected.\n"
-                printf "Stream URL: %s\n" "$m3u8"
-                [ -n "$refr" ] && printf "Referrer: %s\n" "$refr"
-                [ -n "$refr" ] && printf "Try opening the referrer in a browser:\n%s\n" "$refr"
                 return 1
             fi
-
+            
             for player in mpv vlc mplayer cvlc; do
                 command -v "$player" >/dev/null 2>&1 || continue
-                [ -n "$DEBUG" ] && printf "DEBUG: attempting %s playback\n" "$player" >&2
-                [ -n "$DEBUG" ] && printf "DEBUG: m3u8 URL: %s\n" "$m3u8" >&2
-                [ -n "$DEBUG" ] && printf "DEBUG: referrer: %s\n" "$refr" >&2
-
                 if play_stream_with_player "$player" "$title" "$m3u8" "$refr"; then
                     return 0
                 fi
             done
-
             printf "❌ Direct playback failed.\n"
-            printf "ℹ️  This stream appears to be protected or rejected by the player.\n"
-            printf "Stream URL: %s\n" "$m3u8"
-            [ -n "$refr" ] && printf "Referrer: %s\n" "$refr"
-            [ -n "$refr" ] && printf "Try opening the referrer in a browser:\n%s\n" "$refr"
-            return 1
-        else
-            printf "❌ Could not resolve stream URL.\n"
             return 1
         fi
     fi
