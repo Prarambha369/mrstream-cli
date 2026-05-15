@@ -1,0 +1,27 @@
+{
+  "name": "mrstream-cli",
+  "version": "1.0.0",
+  "description": "<p align=\"center\"> <br> <a href=\"http://makeapullrequest.com\"><img src=\"https://img.shields.io/badge/PRs-welcome-brightgreen.svg\"></a> <a href=\"#Linux\"><img src=\"https://img.shields.io/badge/os-linux-brightgreen\"></a> <a href=\"#MacOS\"><img src=\"https://img.shields.io/badge/os-mac-brightgreen\"></a> <a href=\"#Android\"><img src=\"https://img.shields.io/badge/os-android-brightgreen\"></a> <a href=\"#Windows\"><img src=\"https://img.shields.io/badge/os-windows-yellowgreen\"></a> <br> <h1 align=\"center\"> <a href=\"https://github.com/Prarambha369\"><img src=\"https://img.shields.io/badge/author-Prarambha369-lightblue\"></a> <a href=\"https://github.com/Prarambha369/mrstream-cli\"><img src=\"https://img.shields.io/badge/repo-mrstream--cli-blue\"></a> </h1> <p align=\"center\">   <sub>MrStream-Cli is a terminal-based sports event browser and stream launcher built with POSIX shell scripts. It provides a fast, ethical way to find and watch live sports streams directly from your terminal.</sub> </p>",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Prarambha369/mrstream-cli.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Prarambha369/mrstream-cli/issues"
+  },
+  "homepage": "https://github.com/Prarambha369/mrstream-cli#readme",
+  "dependencies": {
+    "playwright": "^1.60.0"
+  }
+}
