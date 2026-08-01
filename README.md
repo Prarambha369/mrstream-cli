@@ -24,8 +24,29 @@ A minimalist, terminal-native sports event browser and stream launcher. 📡
 	Showcase
 </h1>
 
-<!-- Add demo video/webm here when available -->
-<!-- [mrstream-demo.webm](link-to-demo) -->
+<p align="center">
+  <img src=".assets/demo.svg" alt="mrstream-cli demo" width="720"/>
+</p>
+
+<details><summary><b>📺 Replay or Record Your Own Demo</b></summary>
+
+Replay the recorded demo session:
+```sh
+scriptreplay .assets/demo.typescript
+```
+
+Record a fresh demo:
+```sh
+script -q -c "sh scripts/demo.sh" .assets/demo.typescript
+```
+
+Generate a .webm recording (requires `asciinema` + `svg-term`):
+```sh
+asciinema rec .assets/demo.cast -c "sh scripts/demo.sh"
+npx svg-term --in .assets/demo.cast --out .assets/demo.svg --window
+```
+
+</details>
 
 ## Table of Contents
 
@@ -456,6 +477,17 @@ sources:
 | `sources.sportsonline.acknowledge_non_affiliation` | `false` | Confirm you understand MrStream-Cli is not affiliated with content providers |
 
 </details>
+
+## Homies
+
+Other excellent terminal media tools you might enjoy:
+
+- [**ani-cli**](https://github.com/pystardust/ani-cli) — Browse and watch anime from your terminal (13k ⭐)
+- [**lobster**](https://github.com/justchokingaround/lobster) — Watch movies and series from the terminal
+- [**mov-cli**](https://github.com/mov-cli/mov-cli) — Watch everything from your terminal
+- [**yt-dlp**](https://github.com/yt-dlp/yt-dlp) — Feature-rich video downloader
+- [**mpv**](https://github.com/mpv-player/mpv) — The video player that powers mrstream
+- [**fzf**](https://github.com/junegunn/fzf) — The fuzzy finder that powers the interactive menu
 
 ## License
 

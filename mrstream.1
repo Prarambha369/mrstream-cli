@@ -1,0 +1,117 @@
+.TH MRSTREAM 1 "2026-07-12" "0.1.0-alpha" "MrStream-Cli Manual"
+.SH NAME
+mrstream \- terminal-based sports event browser and stream launcher
+.SH SYNOPSIS
+.B mrstream
+[\fIcommand\fR] [\fIoptions\fR]
+.SH DESCRIPTION
+MrStream-Cli is a minimalist, terminal-native sports event browser and stream
+launcher. It fetches live sports schedules, lets you search and select events
+via an interactive \fBfzf\fR menu, then resolves and plays the stream in your
+preferred video player.
+
+This tool is NOT affiliated with sportsonline.st, sportsonline.vc,
+sportssonline.click, or any content provider.
+.SH COMMANDS
+.TP
+.B search \fI"query"\fR
+Search for sports events. Shows all events if no query is given, or filters
+by the provided search term.
+.TP
+.B doctor
+Check that all required dependencies are installed and report any missing ones.
+.TP
+.B update
+Self-update from the git repository. Pulls the latest changes and reinstalls
+if the tool was installed via the install script.
+.TP
+.B version
+Display the current version string.
+.SH OPTIONS
+.TP
+.B \-\-refresh
+Force a refresh of the local cache, ignoring cached results.
+.TP
+.B \-\-download
+Download the selected stream to disk instead of playing it. Uses
+\fByt-dlp\fR if available, then falls back to \fBffmpeg\fR.
+.TP
+.B \-\-quality \fIQUALITY\fR
+Set preferred stream quality. Accepts values like \fB1080p\fR, \fB720p\fR,
+\fBbest\fR, or \fBworst\fR. When set, variant playlists are parsed and
+the matching quality is selected automatically.
+.TP
+.B \-\-debug
+Enable resolver debug output. Prints diagnostic information during stream
+resolution.
+.TP
+.B \-\-player \fIPLAYER\fR
+Force a specific video player. Supported: \fBmpv\fR, \fBvlc\fR, \fBcvlc\fR,
+\fBmplayer\fR.
+.TP
+.B \-\-help
+Display the help message and exit.
+.SH ENVIRONMENT
+.TP
+.B MRSTREAM_PLAYER
+Set the default video player (e.g., \fBMRSTREAM_PLAYER=vlc\fR).
+.TP
+.B MRSTREAM_QUALITY
+Set the preferred stream quality (e.g., \fBMRSTREAM_QUALITY=720p\fR).
+.TP
+.B MRSTREAM_DOWNLOAD_DIR
+Set the download directory (default: \fB~/Downloads\fR).
+.TP
+.B DEBUG
+Enable debug output when set to 1.
+.SH EXAMPLES
+.TP
+Browse all available events:
+.B mrstream search
+.TP
+Search for specific events:
+.B mrstream search "UFC"
+.TP
+Force cache refresh and search:
+.B mrstream \-\-refresh search
+.TP
+Download a stream instead of playing:
+.B mrstream \-\-download search
+.TP
+Select a specific quality:
+.B mrstream \-\-quality 1080p search
+.TP
+Update to the latest version:
+.B mrstream update
+.SH FILES
+.TP
+.I ~/.config/mrstream/sources.yaml
+Configuration file for enabling external sources and acknowledging
+non-affiliation disclaimers.
+.TP
+.I ~/.cache/mrstream/*.cache
+Cache directory for fetched schedules (1-hour TTL).
+.SH DEPENDENCIES
+.TP
+.B curl
+For fetching data from remote sources.
+.TP
+.B fzf
+For the interactive search and selection menu.
+.TP
+.B mpv
+Recommended video player for stream playback.
+.TP
+.B yt-dlp\fR/\fBffmpeg
+Optional: for downloading streams (used by \fB\-\-download\fR).
+.TP
+.B git
+Required for the \fBupdate\fR command.
+.SH BUGS
+Report bugs and issues at:
+.UR https://github.com/Prarambha369/mrstream-cli/issues
+.UE
+.SH LICENSE
+GPL-3.0 License. See the LICENSE file for details.
+.SH AUTHOR
+Prarambha369 <https://github.com/Prarambha369>

@@ -3,7 +3,7 @@
 # This tool is NOT affiliated with sportsonline.vc, sportssonline.click, or any content provider.
 
 CACHE_DIR="${HOME}/.cache/mrstream"
-TTL=3600 # 1 hour
+TTL=600 # 10 minutes (ani-cli standard)
 
 init_cache() {
     mkdir -p "$CACHE_DIR"
@@ -14,7 +14,7 @@ is_cache_valid() {
     [ -f "$cache_file" ] || return 1
 
     current_time=$(date +%s)
-    file_time=$(date -r "$cache_file" +%s)
+    file_time=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || date -r "$cache_file" +%s)
     age=$((current_time - file_time))
 
     [ $age -lt $TTL ]

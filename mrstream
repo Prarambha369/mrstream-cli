@@ -5,7 +5,6 @@
 VERSION="0.1.0-alpha"
 CONFIG_DIR="${HOME}/.config/mrstream"
 CONFIG_FILE="${CONFIG_DIR}/sources.yaml"
-EXIT_CMD="exit"
 CLI_PLAYER=""
 
 # Load core modules
@@ -13,51 +12,96 @@ CLI_PLAYER=""
 if [ -d "$HOME/.local/share/mrstream/src" ]; then
     S_DIR="$HOME/.local/share/mrstream"
 else
-    S_DIR="$(dirname "$(readlink -f "$0")")"
+    S_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 fi
+export S_DIR
 
 [ -f "$S_DIR/src/core/fetcher.sh" ] && . "$S_DIR/src/core/fetcher.sh"
 [ -f "$S_DIR/src/core/cache.sh" ] && . "$S_DIR/src/core/cache.sh"
+[ -f "$S_DIR/src/core/player.sh" ] && . "$S_DIR/src/core/player.sh"
+[ -f "$S_DIR/src/core/resolver.sh" ] && . "$S_DIR/src/core/resolver.sh"
+[ -f "$S_DIR/src/core/quality.sh" ] && . "$S_DIR/src/core/quality.sh"
 [ -f "$S_DIR/src/plugins/sportsonline.sh" ] && . "$S_DIR/src/plugins/sportsonline.sh"
 [ -f "$S_DIR/src/plugins/community.sh" ] && . "$S_DIR/src/plugins/community.sh"
 
 show_help() {
     cat << EOM
-MrStream-Cli v$VERSION
-A minimalist sports stream CLI.
+MrStream-Cli v$VERSION — search and play live sports from your terminal.
 
 USAGE:
-  mrstream [command] [options]
+  mrstream [options] [command]
 
 COMMANDS:
-  search "query"  Search for events
+  search "query"  Browse or search events
   doctor          Check dependencies
+  update          Self-update to latest version
   version         Show version string
 
 OPTIONS:
-  --refresh       Force refresh cache
-  --debug         Enable resolver debug output (prints plugin_resolve diagnostics)
-  --player PLAYER Force specific player (mpv, vlc, cvlc, mplayer)
-  --help          Show this help
-
-SUPPORTED PLAYERS:
-  mpv (default)   Modern player with HLS support
-  vlc / cvlc      Universal multimedia player
-  mplayer         Lightweight legacy player
+  -q, --quality QUALITY  Stream quality (best/worst/360p/720p/1080p, default: best)
+  -p, --player PLAYER    Use specific player (mpv, vlc, cvlc, mplayer)
+  -h, --help             Show this help
+  -v                     Show version
+  -U                     Update to latest version
+  --refresh              Force cache refresh
+  --debug                Enable resolver debug output
 
 ENVIRONMENT:
-  Set MRSTREAM_PLAYER=vlc to use VLC by default
-  Set DEBUG=1 before running for debug output
+  MRSTREAM_PLAYER=vlc          Override default player
+  DEBUG=1                      Enable debug output
+
+EXAMPLES:
+  mrstream search              Browse all events
+  mrstream search "UFC"        Search for events
+  mrstream -q 720p search      Search with 720p quality
+  mrstream -p vlc search       Use VLC player
+  mrstream -U                  Update to latest version
+  mrstream doctor              Verify dependencies
 
 ⚠️ Not affiliated with any content provider.
 EOM
 }
 
+# Suggest install command based on available package manager
+suggest_install() {
+    pkg="$1"
+    if command -v apt >/dev/null 2>&1; then
+        printf "  sudo apt install %s\n" "$pkg"
+    elif command -v pacman >/dev/null 2>&1; then
+        printf "  sudo pacman -S %s\n" "$pkg"
+    elif command -v dnf >/dev/null 2>&1; then
+        printf "  sudo dnf install %s\n" "$pkg"
+    elif command -v yum >/dev/null 2>&1; then
+        printf "  sudo yum install %s\n" "$pkg"
+    elif command -v zypper >/dev/null 2>&1; then
+        printf "  sudo zypper install %s\n" "$pkg"
+    elif command -v apk >/dev/null 2>&1; then
+        printf "  sudo apk add %s\n" "$pkg"
+    elif command -v brew >/dev/null 2>&1; then
+        printf "  brew install %s\n" "$pkg"
+    elif command -v pkg >/dev/null 2>&1; then
+        printf "  pkg install %s\n" "$pkg"
+    elif command -v xbps-install >/dev/null 2>&1; then
+        printf "  sudo xbps-install %s\n" "$pkg"
+    elif command -v emerge >/dev/null 2>&1; then
+        case "$pkg" in
+            mpv) printf "  sudo emerge media-video/mpv\n" ;;
+            *) printf "  sudo emerge %s\n" "$pkg" ;;
+        esac
+    else
+        printf "  Install %s using your distro's package manager\n" "$pkg"
+    fi
+}
+
 check_deps() {
-    for dep in curl fzf grep sed; do
+    all_ok=0
+
+    for dep in curl fzf grep sed yt-dlp; do
         if ! command -v "$dep" >/dev/null 2>&1; then
             printf "❌ Missing dependency: %s\n" "$dep"
-            return 1
+            printf "   Install it:\n"
+            suggest_install "$dep"
+            all_ok=1
         fi
     done
 
@@ -67,20 +111,24 @@ check_deps() {
        ! command -v cvlc >/dev/null 2>&1 && \
        ! command -v mplayer >/dev/null 2>&1; then
         printf "❌ No video player found (need mpv, vlc/cvlc, or mplayer)\n"
-        return 1
+        printf "   Install a player:\n"
+        suggest_install "mpv"
+        printf "   or:\n"
+        suggest_install "vlc"
+        all_ok=1
     fi
-    return 0
-}
 
-# Find available player
-find_player() {
-    for player in mpv vlc mplayer cvlc; do
-        if command -v "$player" >/dev/null 2>&1; then
-            printf "%s" "$player"
-            return 0
+    # Check for optional tools used by advanced resolvers (S5 base64 decode)
+    for tool in base64 openssl; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            printf "⚠️  Optional tool not found: %s\n" "$tool"
+            printf "   (used for decoding some stream configs)\n"
+            printf "   Install it:\n"
+            suggest_install "$tool"
         fi
     done
-    return 1
+
+    return $all_ok
 }
 
 choose_player() {
@@ -97,91 +145,75 @@ choose_player() {
     return 1
 }
 
-play_with_mpv() {
-    title="$1"
-    m3u8="$2"
-    refr="$3"
-
-    if [ -n "$refr" ] && [ "$refr" != "$m3u8" ]; then
-        mpv --title="MrStream: $title" \
-            --no-ytdl \
-            --http-header-fields="User-Agent: Mozilla/5.0 (X11; Linux x86_64),Referer: $refr" \
-            "$m3u8" 2>/dev/null && return 0
-
-        mpv --title="MrStream: $title" \
-            --no-ytdl \
-            --user-agent="Mozilla/5.0 (X11; Linux x86_64)" \
-            --referrer="$refr" \
-            "$m3u8" 2>/dev/null && return 0
+# Self-update: always clone fresh to temp dir, then reinstall
+self_update() {
+    if ! command -v git >/dev/null 2>&1; then
+        printf "❌ git is required for self-update.\n"
+        return 1
     fi
 
-    mpv --title="MrStream: $title" --no-ytdl "$m3u8" 2>/dev/null
-}
-
-play_with_vlc() {
-    player_cmd="$1"
-    title="$2"
-    m3u8="$3"
-    refr="$4"
-
-    if [ -n "$refr" ] && [ "$refr" != "$m3u8" ]; then
-        "$player_cmd" --quiet --play-and-exit \
-            --meta-title="MrStream: $title" \
-            --http-user-agent="Mozilla/5.0 (X11; Linux x86_64)" \
-            --http-referrer="$refr" \
-            "$m3u8" 2>/dev/null && return 0
+    printf "📥 Cloning latest version...\n"
+    tmp_dir=$(mktemp -d)
+    if ! git clone --depth 1 "https://github.com/Prarambha369/mrstream-cli.git" "$tmp_dir" 2>/dev/null; then
+        printf "❌ Failed to clone repository.\n"
+        rm -rf "$tmp_dir"
+        return 1
     fi
 
-    "$player_cmd" --quiet --play-and-exit --meta-title="MrStream: $title" "$m3u8" 2>/dev/null
-}
+    old_version="$VERSION"
+    new_version=$(grep '^VERSION=' "$tmp_dir/mrstream" | cut -d'"' -f2)
 
-play_with_mplayer() {
-    m3u8="$1"
-    mplayer "$m3u8" 2>/dev/null
-}
+    printf "🔄 Reinstalling...\n"
+    BIN_DIR="$HOME/.local/bin"
+    SHARE_DIR="$HOME/.local/share/mrstream"
+    mkdir -p "$BIN_DIR" "$SHARE_DIR"
+    cp "$tmp_dir/mrstream" "$BIN_DIR/mrstream"
+    chmod +x "$BIN_DIR/mrstream"
+    rm -rf "$SHARE_DIR/src"
+    cp -r "$tmp_dir/src" "$SHARE_DIR/"
 
-play_stream_with_player() {
-    player="$1"
-    title="$2"
-    m3u8="$3"
-    refr="$4"
-
-    case "$player" in
-        mpv)
-            play_with_mpv "$title" "$m3u8" "$refr"
-            ;;
-        vlc|cvlc)
-            play_with_vlc "$player" "$title" "$m3u8" "$refr"
-            ;;
-        mplayer)
-            play_with_mplayer "$m3u8"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
-check_consent() {
-    [ -f "$CONFIG_FILE" ] || return 1
-    awk '/^  sportsonline:/{in_section=1} in_section && /enabled:[[:space:]]*true/{e=1} in_section && /acknowledge_non_affiliation:[[:space:]]*true/{a=1} in_section && /^[a-z]/ && !/^  sportsonline:/{in_section=0} END{if(e&&a) exit 0; exit 1}' "$CONFIG_FILE" || return 1
+    rm -rf "$tmp_dir"
+    printf "✅ Updated from v%s to v%s\n" "$old_version" "$new_version"
     return 0
 }
 
+# Check consent with proper section scoping (fixed PONYTAIL-DEBT #1)
+check_consent() {
+    [ -f "$CONFIG_FILE" ] || return 1
+    # Use awk to properly scope checks to each source section
+    # Returns 0 if at least one source is enabled with consent
+    awk '
+    /^  [a-z]+:/ {
+        if (in_section && enabled && ack) {
+            exit 0
+        }
+        in_section=1
+        enabled=0
+        ack=0
+    }
+    in_section && /enabled:[[:space:]]*true/ { enabled=1 }
+    in_section && /acknowledge_non_affiliation:[[:space:]]*true/ { ack=1 }
+    END {
+        if (enabled && ack) exit 0
+        exit 1
+    }
+    ' "$CONFIG_FILE"
+}
+
 request_consent() {
-    printf "⚠️  Source 'sportsonline' requires explicit consent.\n"
-    printf "Do you acknowledge that MrStream-Cli is NOT affiliated with this source\n"
-    printf "and wish to enable it? (y/N): "
+    printf "⚠️  MrStream-Cli uses external sources to list and play streams.\n"
+    printf "Do you acknowledge that MrStream-Cli is NOT affiliated with any\n"
+    printf "content provider and wish to enable these sources? (y/N): "
     read -r response
     case "$response" in
         [yY][eE][sS]|[yY])
-            sed -i 's/enabled:[[:space:]]*false/enabled: true/' "$CONFIG_FILE"
-            sed -i 's/acknowledge_non_affiliation:[[:space:]]*false/acknowledge_non_affiliation: true/' "$CONFIG_FILE"
-            printf "✅ Source enabled. You can now use 'search'.\n"
+            sed -i 's/enabled:[[:space:]]*false/enabled: true/g' "$CONFIG_FILE"
+            sed -i 's/acknowledge_non_affiliation:[[:space:]]*false/acknowledge_non_affiliation: true/g' "$CONFIG_FILE"
+            printf "✅ Sources enabled. You can now use 'search'.\n"
             return 0
             ;;
         *)
-            printf "❌ Consent denied. To use this source, you must enable it in %s\n" "$CONFIG_FILE"
+            printf "❌ Consent denied. To use external sources, enable them in %s\n" "$CONFIG_FILE"
             return 1
             ;;
     esac
@@ -195,45 +227,85 @@ sources:
   sportsonline:
     enabled: false
     acknowledge_non_affiliation: false
+  community:
+    enabled: false
+    acknowledge_non_affiliation: false
 EOM
     fi
 }
 
 search_events() {
     query="$1"
-    
+
     plugins="sportsonline community"
     all_results=""
+    fetch_failures=0
+    total_plugins=0
 
     for plugin in $plugins; do
-        # Isolate plugin execution in a subshell to prevent function collisions
-        # Use S_DIR to ensure absolute paths inside the subshell
-        res=$(sh -c ". $S_DIR/src/core/fetcher.sh; . $S_DIR/src/core/cache.sh; . $S_DIR/src/plugins/$plugin.sh; 
+        total_plugins=$((total_plugins + 1))
+        [ -n "$DEBUG" ] && printf "DEBUG: fetch/parse from plugin: %s\n" "$plugin" >&2
+        
+        # Try to fetch and parse, tracking failures
+        res=$(sh -c ". $S_DIR/src/core/fetcher.sh; . $S_DIR/src/core/cache.sh; . $S_DIR/src/plugins/$plugin.sh;
             cache_path=\$(get_cache_path \"$plugin\")
+            
+            # Try to fetch fresh data if needed
             if [ \"$REFRESH\" = \"true\" ] || ! is_cache_valid \"\$cache_path\"; then
                 init_cache
-                plugin_fetch > \"\$cache_path\" 2>/dev/null
+                if plugin_fetch > \"\$cache_path\" 2>/dev/null; then
+                    [ -n \"$DEBUG\" ] && printf \"DEBUG: plugin %s fetched successfully\n\" \"$plugin\" >&2
+                else
+                    [ -n \"$DEBUG\" ] && printf \"DEBUG: plugin %s fetch failed, using stale cache\n\" \"$plugin\" >&2
+                    # Fetch failed, but we might have stale cache
+                    if [ ! -s \"\$cache_path\" ]; then
+                        exit 1  # No cache available
+                    fi
+                fi
             fi
-            cat \"\$cache_path\" | plugin_parse")
+            
+            # Parse cache if available
+            if [ -f \"\$cache_path\" ] && [ -s \"\$cache_path\" ]; then
+                cat \"\$cache_path\" | plugin_parse
+            fi
+        ")
         
-        if [ -n "$res" ]; then
-            if [ -n "$query" ]; then
-                all_results="${all_results}${res}
-" | grep -i "$query"
-            else
-                all_results="${all_results}${res}
+        fetch_status=$?
+        
+        if [ $fetch_status -ne 0 ]; then
+            fetch_failures=$((fetch_failures + 1))
+            [ -n "$DEBUG" ] && printf "DEBUG: plugin %s failed completely (no cache)\n" "$plugin" >&2
+        elif [ -n "$res" ]; then
+            count=$(printf "%s" "$res" | wc -l)
+            [ -n "$DEBUG" ] && printf "DEBUG: plugin %s returned %d events\n" "$plugin" "$count" >&2
+            all_results="${all_results}${res}
 "
-            fi
+        else
+            [ -n "$DEBUG" ] && printf "DEBUG: plugin %s returned no events\n" "$plugin" >&2
         fi
     done
 
+    # Warn if all sources failed to fetch
+    if [ $fetch_failures -eq $total_plugins ]; then
+        printf "⚠️  Network unavailable. Could not reach any sources.\n"
+        return 1
+    fi
+
+    if [ -n "$query" ]; then
+        all_results=$(printf "%s" "$all_results" | grep -i "$query")
+    fi
+
     if [ -z "$all_results" ]; then
-        printf "No events found.\n"
+        if [ -n "$query" ]; then
+            printf "No events found matching '%s'.\n" "$query"
+        else
+            printf "No events found.\n"
+        fi
         return 1
     fi
 
     if command -v fzf >/dev/null 2>&1; then
-        selected=$(printf "%s\n" "$all_results" | fzf --ansi --prompt="Select Event > " --delimiter='\|' --with-nth=1,2,3)
+        selected=$(printf "%s\n" "$all_results" | fzf --ansi --prompt="Select Event > " --delimiter='|' --with-nth=1,2,3)
     else
         printf "fzf not found. Please install fzf or provide a specific query.\n"
         printf "%s\n" "$all_results"
@@ -244,21 +316,25 @@ search_events() {
         url=$(printf "%s" "$selected" | cut -d'|' -f4)
         title=$(printf "%s" "$selected" | cut -d'|' -f2)
         printf "Resolving stream for: %s\n" "$title"
-        
+
         # Try each plugin's resolver until one works
         resolved_output=""
         for plugin in $plugins; do
-            resolved_output=$(sh -c ". ./src/core/fetcher.sh; . ./src/plugins/$plugin.sh; plugin_resolve \"$url\"")
+            [ -n "$DEBUG" ] && printf "DEBUG: trying resolver: %s\n" "$plugin" >&2
+            resolved_output=$(sh -c ". \"$S_DIR/src/core/fetcher.sh\"; . \"$S_DIR/src/plugins/$plugin.sh\"; plugin_resolve \"$url\"")
             if [ -n "$resolved_output" ]; then
-                # Guard: Ensure the resolved URL is actually a stream (not a PHP page)
-                m3u8_check=$(printf "%s\n" "$resolved_output" | sed -n '1p')
-                if echo "$m3u8_check" | grep -q "\.php$"; then
-                    resolved_output=""
-                    continue
-                fi
+                [ -n "$DEBUG" ] && printf "DEBUG: plugin %s resolved successfully\n" "$plugin" >&2
                 break
+            else
+                [ -n "$DEBUG" ] && printf "DEBUG: plugin %s failed to resolve\n" "$plugin" >&2
             fi
         done
+
+        if [ -z "$resolved_output" ]; then
+            # Try yt-dlp fallback (PONYTAIL-DEBT #2)
+            [ -n "$DEBUG" ] && printf "DEBUG: all plugin resolvers failed, trying yt-dlp fallback\n" >&2
+            resolved_output=$(resolve_with_ytdlp "$url" "")
+        fi
 
         if [ -z "$resolved_output" ]; then
             printf "❌ Could not resolve stream URL.\n"
@@ -267,24 +343,42 @@ search_events() {
 
         m3u8=$(printf "%s\n" "$resolved_output" | sed -n '1p')
         refr=$(printf "%s\n" "$resolved_output" | sed -n '2p')
-
+        [ -n "$DEBUG" ] && printf "DEBUG: resolved m3u8=%s refr=%s\n" "$m3u8" "$refr" >&2
+        
+        # Try HLS quality selection if m3u8 is a variant playlist (PONYTAIL-DEBT #3)
+        if [ -n "$m3u8" ]; then
+            variants=$(parse_m3u8_variants "$m3u8" "$refr")
+            if [ -n "$variants" ]; then
+                [ -n "$DEBUG" ] && printf "DEBUG: found variant playlist, selecting quality\n" >&2
+                selected_url=$(select_quality "$variants" "${QUALITY:-best}")
+                if [ -n "$selected_url" ]; then
+                    m3u8="$selected_url"
+                fi
+            fi
+        fi
+        
         if [ -n "$m3u8" ]; then
             printf "Playing: %s\n" "$m3u8"
             preferred_player=$(choose_player)
 
             if [ -n "$preferred_player" ]; then
-                if play_stream_with_player "$preferred_player" "$title" "$m3u8" "$refr"; then
+                if play_stream "$preferred_player" "$title" "$m3u8" "$refr"; then
                     return 0
                 fi
                 printf "❌ Direct playback failed with %s.\n" "$preferred_player"
                 return 1
             fi
-            
+
             for player in mpv vlc mplayer cvlc; do
-                command -v "$player" >/dev/null 2>&1 || continue
-                if play_stream_with_player "$player" "$title" "$m3u8" "$refr"; then
+                command -v "$player" >/dev/null 2>&1 || {
+                    [ -n "$DEBUG" ] && printf "DEBUG: player %s not found, skipping\n" "$player" >&2
+                    continue
+                }
+                [ -n "$DEBUG" ] && printf "DEBUG: trying player: %s\n" "$player" >&2
+                if play_stream "$player" "$title" "$m3u8" "$refr"; then
                     return 0
                 fi
+                [ -n "$DEBUG" ] && printf "DEBUG: player %s failed\n" "$player" >&2
             done
             printf "❌ Direct playback failed.\n"
             return 1
@@ -295,19 +389,28 @@ search_events() {
 # Parse Global Flags
 REFRESH="false"
 DEBUG=""
+QUALITY="best"
 while [ $# -gt 0 ]; do
     case "$1" in
         --refresh) REFRESH="true"; shift;;
         --debug) DEBUG=1; export DEBUG; shift;;
-        --player)
+        --quality|-q)
             shift
-            [ $# -gt 0 ] || { printf "Missing player after --player\n"; show_help; $EXIT_CMD 1; }
+            [ $# -gt 0 ] || { printf "Missing quality after --quality\n"; show_help; exit 1; }
+            QUALITY="$1"
+            shift
+            ;;
+        --player|-p)
+            shift
+            [ $# -gt 0 ] || { printf "Missing player after --player\n"; show_help; exit 1; }
             CLI_PLAYER="$1"
             shift
             ;;
-        --help) show_help; $EXIT_CMD 0;;
-        search|doctor|version) break;;
-        -*) printf "Unknown option: %s\n" "$1"; show_help; $EXIT_CMD 1;;
+        --help|-h) show_help; exit 0;;
+        -v) printf "MrStream-Cli v%s\n" "$VERSION"; exit 0;;
+        -U) self_update; exit $?;;
+        search|doctor|update|version) break;;
+        -*) printf "Unknown option: %s\n" "$1"; show_help; exit 1;;
         *) break;;
     esac
 done
@@ -320,12 +423,21 @@ cmds="$1"
 
 case "$cmds" in
     search)
+        # Check dependencies before running search (Phase 2 requirement)
+        if ! check_deps; then
+            printf "\n❌ Missing required dependencies. Install them and try again.\n"
+            exit 1
+        fi
+        
         if ! check_consent; then
             if ! request_consent; then
-                $EXIT_CMD 1
+                exit 1
             fi
         fi
         search_events "$1"
+        ;;
+    update)
+        self_update
         ;;
     doctor)
         check_deps && printf "✅ All dependencies found.\n"

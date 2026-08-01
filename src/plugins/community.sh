@@ -5,6 +5,19 @@
 SOURCE_URL="https://iptv-org.github.io/iptv/categories/sports.m3u"
 AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
+# Plugin metadata (Phase 3 requirement)
+plugin_name() {
+    printf "community"
+}
+
+plugin_version() {
+    printf "1.0.0"
+}
+
+plugin_description() {
+    printf "IPTV-org community curated sports streams"
+}
+
 # Fetch raw M3U data
 plugin_fetch() {
     # Point directly to the user's config directory for maximum reliability
@@ -30,8 +43,10 @@ plugin_parse() {
     awk -F',' '
     /^#EXTINF/ {
         title = $NF
-        match($0, /group-title="([^"]*)"/, group_arr)
-        group = group_arr[1]
+        group = ""
+        if (match($0, /group-title="[^"]*"/)) {
+            group = substr($0, RSTART + 13, RLENGTH - 14)
+        }
         if (group == "") group = "Sports"
         
         # Basic quality filter: prefer HD/4K/1080p if mentioned in title
@@ -51,9 +66,12 @@ plugin_parse() {
 plugin_resolve() {
     url="$1"
     
+    [ -n "$DEBUG" ] && printf "DEBUG: community: resolving %s\n" "$url" >&2
+
     # Most community streams prefer NO referer or a blank one.
     # Sending iptv-org.github.io often triggers blocks.
     if echo "$url" | grep -q ".m3u8"; then
+        [ -n "$DEBUG" ] && printf "DEBUG: community: URL is direct m3u8, returning as-is\n" >&2
         printf "%s\n" "$url"
         # Return empty string for referrer to let mpv use default behavior
         printf "" 
@@ -61,13 +79,16 @@ plugin_resolve() {
     fi
 
     # If not a direct m3u8, follow the redirect
+    [ -n "$DEBUG" ] && printf "DEBUG: community: following redirect to find effective URL...\n" >&2
     resolved=$(curl -sL -A "$AGENT" -o /dev/null -w "%{url_effective}" "$url")
     
     if [ -n "$resolved" ]; then
+        [ -n "$DEBUG" ] && printf "DEBUG: community: resolved to %s\n" "$resolved" >&2
         printf "%s\n" "$resolved"
         printf ""
         return 0
     fi
 
+    [ -n "$DEBUG" ] && printf "DEBUG: community: resolve failed (redirect empty)\n" >&2
     return 1
 }

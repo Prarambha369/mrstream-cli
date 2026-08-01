@@ -22,6 +22,9 @@
   },
   "homepage": "https://github.com/Prarambha369/mrstream-cli#readme",
   "dependencies": {
-    "playwright": "^1.60.0"
+    "playwright": "^1.61.1"
+  },
+  "devDependencies": {
+    "svg-term-cli": "^2.1.1"
   }
 }
